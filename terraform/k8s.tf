@@ -6,18 +6,33 @@ data "google_client_config" "current" {
 # This file contains all the interactions with Kubernetes
 provider "kubernetes" {
   load_config_file = false
-  host             = google_container_cluster.vault.endpoint
+  host             = data.google_container_cluster.main-cluster.endpoint
 
   cluster_ca_certificate = base64decode(
-    google_container_cluster.vault.master_auth[0].cluster_ca_certificate,
+    data.google_container_cluster.main-cluster.master_auth[0].cluster_ca_certificate,
   )
   token = data.google_client_config.current.access_token
+}
+
+resource "kubernetes_namespace" "vault" {
+  metadata {
+    annotations = {
+      name = "vault"
+    }
+
+    labels = {
+      mylabel = "vault"
+    }
+
+    name = "vault"
+  }
 }
 
 # Write the secret
 resource "kubernetes_secret" "vault-tls" {
   metadata {
     name = "vault-tls"
+    namespace = "vault"
   }
 
   data = {
@@ -25,6 +40,8 @@ resource "kubernetes_secret" "vault-tls" {
     "vault.key" = tls_private_key.vault.private_key_pem
     "ca.crt"    = tls_self_signed_cert.vault-ca.cert_pem
   }
+  depends_on =[kubernetes_namespace.vault]
+  
 }
 
 # Render the YAML file
@@ -32,7 +49,7 @@ data "template_file" "vault" {
   template = file("${path.module}/../k8s/vault.yaml")
 
   vars = {
-    load_balancer_ip         = google_compute_address.vault.address
+    load_balancer_ip         = "vault.vault.svc.cluster.local"
     num_vault_pods           = var.num_vault_pods
     vault_container          = var.vault_container
     vault_init_container     = var.vault_init_container
@@ -50,13 +67,13 @@ data "template_file" "vault" {
 # shell out.
 resource "null_resource" "apply" {
   triggers = {
-    host = md5(google_container_cluster.vault.endpoint)
+    host = md5(data.google_container_cluster.main-cluster.endpoint)
     client_certificate = md5(
-      google_container_cluster.vault.master_auth[0].client_certificate,
+      data.google_container_cluster.main-cluster.master_auth[0].client_certificate,
     )
-    client_key = md5(google_container_cluster.vault.master_auth[0].client_key)
+    client_key = md5(data.google_container_cluster.main-cluster.master_auth[0].client_key)
     cluster_ca_certificate = md5(
-      google_container_cluster.vault.master_auth[0].cluster_ca_certificate,
+      data.google_container_cluster.main-cluster.master_auth[0].cluster_ca_certificate,
     )
   }
 
@@ -64,10 +81,10 @@ resource "null_resource" "apply" {
 
   provisioner "local-exec" {
     command = <<EOF
-gcloud container clusters get-credentials "${google_container_cluster.vault.name}" --region="us-central1" --project="${google_container_cluster.vault.project}"
+gcloud container clusters get-credentials "${data.google_container_cluster.main-cluster.name}" --region="us-central1" --project="${data.google_container_cluster.main-cluster.project}"
 
 CONTEXT="gke_wesaas-playground_us-central1_vault"
-echo '${data.template_file.vault.rendered}' | kubectl apply -n default --context="$CONTEXT" -f -
+echo '${data.template_file.vault.rendered}' | kubectl apply -n vault --context="$CONTEXT" -f -
 EOF
 
   }
@@ -79,7 +96,7 @@ resource "null_resource" "wait-for-finish" {
     command = <<EOF
 for i in $(seq -s " " 1 15); do
   sleep $i
-  if [ $(kubectl get pod -n default | grep vault | wc -l) -eq ${var.num_vault_pods} ]; then
+  if [ $(kubectl get pod -n vault | grep vault | wc -l) -eq ${var.num_vault_pods} ]; then
     exit 0
   fi
 done

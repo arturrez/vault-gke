@@ -6,9 +6,7 @@ metadata:
   labels:
     app: vault
 spec:
-  type: LoadBalancer
-  loadBalancerIP: ${load_balancer_ip}
-  externalTrafficPolicy: Local
+  type: ClusterIP
   selector:
     app: vault
   ports:

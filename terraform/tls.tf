@@ -42,11 +42,7 @@ resource "tls_cert_request" "vault" {
   dns_names = [
     "vault",
     "vault.local",
-    "vault.default.svc.cluster.local",
-  ]
-
-  ip_addresses = [
-    google_compute_address.vault.address,
+    "vault.vault.svc.cluster.local",
   ]
 
   subject {
